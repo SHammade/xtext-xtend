@@ -116,9 +116,9 @@ Member returns XtendMember:
 				type=JvmTypeReference name=ValidID?
 			|  
 				type=JvmTypeReference name=ValidID
-			) ('=' initialValue=XExpression)? ';'?
+			) ('=' initialValue=XExpression)? (invariant=InvariantRuleGroup)? ';'?
 
-		) | (
+		)  | (
 			{XtendFunction.annotationInfo = current} modifiers+=CommonModifier*
 			modifiers+=MethodModifier (modifiers+=CommonModifier | modifiers+=MethodModifier)* 
 			('<' typeParameters+=JvmTypeParameter (',' typeParameters+=JvmTypeParameter)* '>')?
@@ -131,8 +131,9 @@ Member returns XtendMember:
 			)
 			(parameters+=Parameter (',' parameters+=Parameter)*)? ')'
 			('throws' exceptions+=JvmTypeReference (',' exceptions+=JvmTypeReference)*)?
-			(expression=XBlockExpression | expression=RichString | ';')?
-			
+			('pre' invariant=PreFunctionRuleGroup)?
+			('post' invariant=PostFunctionRuleGroup)?
+			(expression=XBlockExpression | expression=RichString | ';')?			
 		) | (
 			{XtendConstructor.annotationInfo = current} modifiers+=CommonModifier*
 			'new' 
@@ -167,8 +168,81 @@ Member returns XtendMember:
 			'annotation' name=ValidID '{'
 			   (members+=AnnotationField)*
 		   	'}'
+	   	) | (
+	   		{XtendFunction.annotationInfo = current}
+	   			invariant=DefRule 
+	   	) | (
+			{XtendFunction.annotationInfo = current}
+				invariant=DefInvariant
 	   	)
 	)
+;
+
+InvariantRuleGroup returns XRuleGroup:
+	(operation=LogicOperation)? 
+	children+=UnnamedBoundRule
+	(children+=InvariantRuleGroup)*
+;
+
+UnnamedBoundRule returns XBoundRule:
+	'range' {XBoundRule} lowerBound=INT? '..' upperBound=INT?
+;
+
+LogicOperation returns XLogicOperation:
+	'AND' | 'OR'
+;
+
+NamedBoundRule returns XBoundRule:
+	{XBoundRule}
+	reference=ValidID 'range' lowerBound=INT? '..' upperBound=INT?
+;
+
+PreFunctionRuleGroup returns XRuleGroup:
+	{XPreRuleGroup}
+ 	children+=Rule (',' children+=Rule)*
+ 	('pre' children+=PreFunctionRuleGroup)* 
+	('post' children+=PostFunctionRuleGroup)*
+;
+ 
+PostFunctionRuleGroup returns XRuleGroup:
+	{XPostRuleGroup}
+	children+=Rule (',' children+=Rule)*
+	('pre' children+=PreFunctionRuleGroup)* 
+	('post' children+=PostFunctionRuleGroup)*
+;
+ 
+Rule returns XRule:
+	NamedOrResultBoundRule | ReferenceRule
+;
+
+NamedOrResultBoundRule returns XBoundRule:
+	NamedBoundRule | ReturnBoundRule
+;
+
+ReferenceRule returns XReferenceRule:
+	reference=ValidID 
+	('(' (parameterName+=ValidID (',' parameterName+=ValidID)*)? ')')?
+;
+
+DefRule returns XNamedRuleGroup:
+	'rule' {XNamedRuleGroup} name=ValidID 
+	('(' (parameters+=Parameter (',' parameters+=Parameter)*)? ')')?
+	'{'
+		(children+=NamedBoundRule)*
+		(children+=ReturnBoundRule)*
+	'}'
+;
+
+ReturnBoundRule returns XBoundRule:
+	{XReturnBoundRule}
+	'result' 'range' lowerBound=INT? '..' upperBound=INT?
+;
+
+DefInvariant returns XRuleGroup:
+	{XInvariantRuleGroup}
+	'inv' '{'
+		(children+=NamedBoundRule)*
+	'}'
 ;
 
 TypeReferenceNoTypeArgs returns types::JvmParameterizedTypeReference:

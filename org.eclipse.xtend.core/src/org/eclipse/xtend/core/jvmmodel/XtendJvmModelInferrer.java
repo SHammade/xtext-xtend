@@ -17,6 +17,8 @@ import java.util.List;
 import java.util.Set;
 
 import org.apache.log4j.Logger;
+import org.eclipse.emf.common.util.BasicEList;
+import org.eclipse.emf.common.util.EList;
 import org.eclipse.emf.common.util.TreeIterator;
 import org.eclipse.emf.ecore.EObject;
 import org.eclipse.xtend.core.macro.ActiveAnnotationContext;
@@ -25,6 +27,15 @@ import org.eclipse.xtend.core.macro.ActiveAnnotationContexts;
 import org.eclipse.xtend.core.macro.AnnotationProcessor;
 import org.eclipse.xtend.core.xtend.AnonymousClass;
 import org.eclipse.xtend.core.xtend.CreateExtensionInfo;
+import org.eclipse.xtend.core.xtend.XBoundRule;
+import org.eclipse.xtend.core.xtend.XInvariantRuleGroup;
+import org.eclipse.xtend.core.xtend.XNamedRuleGroup;
+import org.eclipse.xtend.core.xtend.XPostRuleGroup;
+import org.eclipse.xtend.core.xtend.XPreRuleGroup;
+import org.eclipse.xtend.core.xtend.XReferenceRule;
+import org.eclipse.xtend.core.xtend.XReturnBoundRule;
+import org.eclipse.xtend.core.xtend.XRuleComponent;
+import org.eclipse.xtend.core.xtend.XRuleGroup;
 import org.eclipse.xtend.core.xtend.XtendAnnotationType;
 import org.eclipse.xtend.core.xtend.XtendClass;
 import org.eclipse.xtend.core.xtend.XtendConstructor;
@@ -77,14 +88,17 @@ import org.eclipse.xtext.xbase.annotations.xAnnotations.XAnnotation;
 import org.eclipse.xtext.xbase.compiler.DisableCodeGenerationAdapter;
 import org.eclipse.xtext.xbase.compiler.GeneratorConfig;
 import org.eclipse.xtext.xbase.compiler.IGeneratorConfigProvider;
+import org.eclipse.xtext.xbase.compiler.output.ITreeAppendable;
 import org.eclipse.xtext.xbase.jvmmodel.AbstractModelInferrer;
 import org.eclipse.xtext.xbase.jvmmodel.IJvmDeclaredTypeAcceptor;
 import org.eclipse.xtext.xbase.jvmmodel.IJvmModelAssociator;
 import org.eclipse.xtext.xbase.jvmmodel.JvmTypeExtensions;
 import org.eclipse.xtext.xbase.jvmmodel.JvmTypesBuilder;
 import org.eclipse.xtext.xbase.lib.Extension;
+import org.eclipse.xtext.xbase.lib.Procedures;
 import org.eclipse.xtext.xbase.lib.Procedures.Procedure1;
 import org.eclipse.xtext.xbase.resource.BatchLinkableResource;
+import org.eclipse.xtext.xbase.typesystem.InferredTypeIndicator;
 
 import com.google.common.base.Predicate;
 import com.google.common.collect.Iterables;
@@ -250,6 +264,80 @@ public class XtendJvmModelInferrer extends AbstractModelInferrer {
 		}
 	}
 	
+	public JvmOperation toGetter(/* @Nullable */ final EObject sourceElement, /* @Nullable */ final String propertyName, /* @Nullable */ final String fieldName, /* @Nullable */ JvmTypeReference typeRef, final String methodName) {
+		if(sourceElement == null || propertyName == null || fieldName == null) 
+			return null;
+		JvmOperation result = typesFactory.createJvmOperation();
+		result.setVisibility(JvmVisibility.PUBLIC);
+		String prefix = (isPrimitiveBoolean(typeRef) ? "is" : "get");
+		result.setSimpleName(prefix + Strings.toFirstUpper(propertyName));
+		result.setReturnType(jvmTypesBuilder.cloneWithProxies(typeRef));
+		jvmTypesBuilder.setBody(result, new Procedures.Procedure1<ITreeAppendable>() {
+			@Override
+			public void apply(/* @Nullable */ ITreeAppendable p) {
+				if(p != null) {
+					p = p.trace(sourceElement);
+					p.append(methodName);
+					p.append("();\n");
+					p.append("return this.");
+					p.append(fieldName);
+					p.append(";\n");
+				}
+			}
+		});
+		return jvmTypesBuilder.associate(sourceElement, result);
+	}
+	
+	protected boolean isPrimitiveBoolean(JvmTypeReference typeRef) {
+		if (InferredTypeIndicator.isInferred(typeRef)) {
+			return false;
+		}
+		
+		return typeRef != null && typeRef.getType() != null &&
+				!typeRef.getType().eIsProxy() &&
+				"boolean".equals(typeRef.getType().getIdentifier());
+	}
+	
+	public JvmOperation toSetter(/* @Nullable */ final EObject sourceElement, /* @Nullable */ final String propertyName, /* @Nullable */ final String fieldName, /* @Nullable */ JvmTypeReference typeRef, final String methodName ) {
+		if(sourceElement == null || propertyName == null || fieldName == null) 
+			return null;
+		JvmOperation result = typesFactory.createJvmOperation();
+		result.setVisibility(JvmVisibility.PUBLIC);		
+		result.setReturnType(typeReferences.getTypeForName(Void.TYPE,sourceElement));
+		result.setSimpleName("set" + Strings.toFirstUpper(propertyName));
+		
+		final JvmFormalParameter parameter = typesFactory.createJvmFormalParameter();
+		parameter.setName(propertyName);
+		if(sourceElement instanceof  XtendField)
+		{
+			XtendField field = (XtendField) sourceElement;
+			if (field.getType() != null) {
+				parameter.setParameterType(jvmTypesBuilder.cloneWithProxies(field.getType()));
+			} else if (field.getInitialValue() != null) {
+				parameter.setParameterType(jvmTypesBuilder.inferredType(field.getInitialValue()));
+			}
+		}		
+		result.getParameters().add(parameter);
+		jvmTypesBuilder.setBody(result, new Procedures.Procedure1<ITreeAppendable>() {
+			@Override
+			public void apply(/* @Nullable */ ITreeAppendable p) {
+				if(p != null) {
+					p = p.trace(sourceElement);
+					
+					p.append(methodName);
+					p.append("();\n");
+					
+					p.append("this.");
+					p.append(fieldName);
+					p.append(" = ");
+					p.append(propertyName);
+					p.append(";");
+				}
+			}
+		});
+		return jvmTypesBuilder.associate(sourceElement, result);
+	}
+	
 	protected JvmDeclaredType doInferTypeSceleton(final XtendTypeDeclaration declaration, final IJvmDeclaredTypeAcceptor acceptor,
 			boolean preIndexingPhase, XtendFile xtendFile, List<Runnable> doLater) {
 		if (Strings.isEmpty(declaration.getName()))
@@ -398,7 +486,7 @@ public class XtendJvmModelInferrer extends AbstractModelInferrer {
 		addDefaultConstructor(source, inferredJvmType);
 		for (XtendMember member : source.getMembers()) {
 			if (member instanceof XtendField
-					|| (member instanceof XtendFunction && ((XtendFunction) member).getName() != null)
+					|| (member instanceof XtendFunction)
 					|| member instanceof XtendConstructor) {
 				transform(member, inferredJvmType, true);
 			}
@@ -573,15 +661,79 @@ public class XtendJvmModelInferrer extends AbstractModelInferrer {
 			throw new IllegalArgumentException("Cannot transform " + String.valueOf(sourceMember) + " to a JvmMember");
 		}
 	}
+	
+	private void renameReferenceForReturnBoundRules(XRuleComponent component) {
+		if(component instanceof XReturnBoundRule)
+		{
+			XReturnBoundRule xReturnBoundRule = ((XReturnBoundRule) component);
+			if(xReturnBoundRule.getReference() == null)
+				xReturnBoundRule.setReference("result");
+		}
+		for(XRuleComponent child : component.getChildren())
+			renameReferenceForReturnBoundRules(child);
+	}
 
-	protected void transform(XtendFunction source, JvmGenericType container, boolean allowDispatch) {
+	protected void transform(XtendFunction source, JvmGenericType container, boolean allowDispatch) {		
 		JvmOperation operation = typesFactory.createJvmOperation();
-		operation.setAbstract(source.isAbstract());
-		operation.setNative(source.isNative());
-		operation.setSynchronized(source.isSynchonized());
-		operation.setStrictFloatingPoint(source.isStrictFloatingPoint());
-		if (!source.isAbstract())
-			operation.setFinal(source.isFinal());
+		XRuleGroup rules = source.getInvariant();
+		boolean isAbstract = source.isAbstract();
+		if(rules != null)
+		{
+			if(source.getName() == null)
+			{
+				if(rules instanceof XNamedRuleGroup)					
+					source.setName(((XNamedRuleGroup) rules).getName());
+				else if(rules instanceof XInvariantRuleGroup) 
+					source.setName("inv");
+				else
+					return;
+			}
+			if(rules instanceof XNamedRuleGroup)
+			{
+				XNamedRuleGroup namedRules = (XNamedRuleGroup) rules;
+				for (XtendParameter parameter : namedRules.getParameters()) {
+					translateParameter(operation, parameter);
+				}
+				for(XRuleComponent component : rules.getChildren())
+				{
+					if(component instanceof XReturnBoundRule)
+					{
+						JvmFormalParameter jvmParam = typesFactory.createJvmFormalParameter();
+						jvmParam.setName("result");
+						JvmTypeReference type = typeReferences.getTypeForName(Integer.TYPE, jvmParam);
+						jvmParam.setParameterType(type);
+						operation.getParameters().add(jvmParam);	
+						((XReturnBoundRule) component).setReference("result");
+					}
+				}
+			}
+			renameReferenceForReturnBoundRules(rules);
+			isAbstract = false;
+			if(source.getReturnType() == null) {
+				JvmTypeReference returnType = typeReferences.getTypeForName(Void.TYPE, source);
+				source.setReturnType(returnType);
+			}
+		}
+		if(source.getName() == null)
+			return;
+		
+		if(rules != null)
+		{
+			operation.setAbstract(false);
+			operation.setNative(false);
+			operation.setSynchronized(false);
+			operation.setStrictFloatingPoint(false);
+			operation.setFinal(false);
+		}
+		else
+		{
+			operation.setAbstract(isAbstract);
+			operation.setNative(source.isNative());
+			operation.setSynchronized(source.isSynchonized());
+			operation.setStrictFloatingPoint(source.isStrictFloatingPoint());
+			if (!source.isAbstract())
+				operation.setFinal(source.isFinal());
+		}		
 		container.getMembers().add(operation);
 		associator.associatePrimary(source, operation);
 		String sourceName = source.getName();
@@ -591,10 +743,16 @@ public class XtendJvmModelInferrer extends AbstractModelInferrer {
 				visibility = JvmVisibility.PROTECTED;
 			sourceName = "_" + sourceName;
 		}
-		operation.setSimpleName(sourceName);
+		if(rules != null)
+			visibility = JvmVisibility.PRIVATE;
+		operation.setSimpleName(sourceName);		
 		operation.setVisibility(visibility);
-		operation.setStatic(source.isStatic());
-		if (!operation.isAbstract() && !operation.isStatic() && container.isInterface())
+		if(rules != null)
+			operation.setStatic(false);
+		else
+			operation.setStatic(source.isStatic());
+		
+		if (!operation.isAbstract() && !operation.isStatic() && container.isInterface() && rules == null)
 			operation.setDefault(true);
 		for (XtendParameter parameter : source.getParameters()) {
 			translateParameter(operation, parameter);
@@ -611,9 +769,30 @@ public class XtendJvmModelInferrer extends AbstractModelInferrer {
 			returnType = jvmTypesBuilder.inferredType(expression);
 		} else {
 			returnType = jvmTypesBuilder.inferredType();
+		}		
+		operation.setReturnType(returnType);
+
+		if(rules != null)
+		{						
+			String methodName = source.getName().concat("Call");	
+			StringBuffer arguments = new StringBuffer();		
+			Iterator<XtendParameter> it = source.getParameters().iterator();
+			while(it.hasNext())
+			{
+				XtendParameter p = it.next();
+				arguments.append(p.getName());
+				if(it.hasNext())
+					arguments.append(", ");
+			}
+			String functionArguments = arguments.toString();
+			if(source.getExpression() != null)
+			{
+				copyOperation(operation, source.getExpression(), container, methodName);
+			}
+			Procedure1<ITreeAppendable> p = new RuleBuilder(operation, rules, methodName, functionArguments);
+			jvmTypesBuilder.setBody(operation, p);
 		}
 		
-		operation.setReturnType(returnType);
 		copyAndFixTypeParameters(source.getTypeParameters(), operation);
 		for (JvmTypeReference exception : source.getExceptions()) {
 			operation.getExceptions().add(jvmTypesBuilder.cloneWithProxies(exception));
@@ -627,10 +806,199 @@ public class XtendJvmModelInferrer extends AbstractModelInferrer {
 		if (createExtensionInfo != null) {
 			transformCreateExtension(source, createExtensionInfo, container, operation, returnType);
 		} else {
-			setBody(operation, expression);
+			if(rules == null)
+				setBody(operation, expression);
 		}
+		
 		jvmTypesBuilder.copyDocumentationTo(source, operation);
 	}
+	
+	private void copyOperation(final JvmOperation source, final XExpression expression, final JvmGenericType container, String name) {
+		JvmOperation operation = typesFactory.createJvmOperation();
+		operation.setSimpleName(name);
+		JvmTypeReference returnType = jvmTypesBuilder.cloneWithProxies(source.getReturnType());
+		for(JvmFormalParameter p : source.getParameters())
+		{
+			JvmFormalParameter newParameter = typesFactory.createJvmFormalParameter();
+			newParameter.setName(p.getName());
+			
+			JvmTypeReference newParameterType = jvmTypesBuilder.cloneWithProxies(p.getParameterType());
+			newParameter.setParameterType(newParameterType);
+			operation.getParameters().add(newParameter);
+		}
+		operation.setReturnType(returnType);
+		operation.setVisibility(source.getVisibility());
+		operation.setAbstract(source.isAbstract());
+		operation.setNative(source.isNative());
+		operation.setSynchronized(source.isSynchronized());
+		operation.setStrictFloatingPoint(source.isStrictFloatingPoint());
+		if (!source.isAbstract())
+			operation.setFinal(source.isFinal());
+		operation.setStatic(source.isStatic());
+		if (!operation.isAbstract() && !operation.isStatic() && container.isInterface())
+			operation.setDefault(true);
+		container.getMembers().add(operation);
+		setBody(operation, expression);
+	}
+	
+	/**
+	 * @author resh - Initial contribution and API
+	 */
+	private final class RuleBuilder implements Procedures.Procedure1<ITreeAppendable> {
+		
+		private JvmOperation operation;
+		private XRuleComponent rules;
+		private String methodName;
+		private String functionArguments;
+		
+		public RuleBuilder(JvmOperation operation, XRuleComponent rules, String methodName, String functionArguments) {
+			this.operation = operation;
+			this.rules = rules;
+			this.methodName = methodName;
+			this.functionArguments = functionArguments;
+		}
+		
+		@Override
+		public void apply(/* @Nullable */ ITreeAppendable p) {
+			if(p != null) {
+				p = p.trace(operation);
+
+				if(rules instanceof XNamedRuleGroup)
+				{
+					generateNamedRuleGroup(p);
+				}
+				else if(rules instanceof XInvariantRuleGroup)
+				{
+					generateInvariant(p);
+				}
+				else if(rules instanceof XPreRuleGroup || rules instanceof XPostRuleGroup)
+				{
+					generateMethod(p);
+				}
+				
+				
+			}
+		}
+
+		private void generateMethod(ITreeAppendable p) {
+			EList<XPreRuleGroup> preList = new BasicEList<XPreRuleGroup>();
+			EList<XPostRuleGroup> postList = new BasicEList<XPostRuleGroup>();
+			visitRuleGroups(p, rules, preList, postList);
+			
+			for(XPreRuleGroup pre : preList)
+			{
+				for(XRuleComponent child : pre.getChildren())
+				{
+					if(child instanceof XBoundRule)
+					{
+						visitBoundRule(p, (XBoundRule) child);
+					}
+					else if(child instanceof XReferenceRule)
+					{
+						visitReferenceRule(p, (XReferenceRule) child);
+					}
+				}
+			}
+			
+			JvmTypeReference returnParameterType = jvmTypesBuilder.cloneWithProxies(operation.getReturnType());
+			if(!returnParameterType.getType().getSimpleName().equals("void"))
+			{								
+				p.append(returnParameterType.getType().getSimpleName());
+				p.append(" result =");							
+			}	
+			p.append(methodName);
+			p.append("(");
+			p.append(functionArguments);
+			p.append(");\n");	
+			
+			for(XPostRuleGroup post : postList)
+			{
+				for(XRuleComponent child : post.getChildren())
+				{
+					if(child instanceof XBoundRule)
+					{
+						visitBoundRule(p, (XBoundRule) child);
+					}
+					else if(child instanceof XReferenceRule)
+					{
+						XReferenceRule refRule = (XReferenceRule) child;
+						refRule.getParameterName().add("result");
+						visitReferenceRule(p, refRule);
+					}
+				}
+			}
+			if(!returnParameterType.getType().getSimpleName().equals("void"))
+			{
+				p.append("return result;\n");
+			}			
+		}
+
+		private void generateInvariant(ITreeAppendable p) {
+			for(XRuleComponent child : rules.getChildren())
+			{
+				if(child instanceof XBoundRule)
+				{
+					visitBoundRule(p, (XBoundRule) child);
+				}
+			}
+		}
+
+		private void generateNamedRuleGroup(ITreeAppendable p) {
+			for(XRuleComponent child : rules.getChildren())
+			{
+				if(child instanceof XBoundRule)
+				{
+					visitBoundRule(p, (XBoundRule) child);
+				}
+			}
+		}
+
+		private void visitRuleGroups(ITreeAppendable p, XRuleComponent component, EList<XPreRuleGroup> preList, EList<XPostRuleGroup> postList)
+		{				
+			if(component instanceof XPreRuleGroup)
+			{
+				XPreRuleGroup c = (XPreRuleGroup) component;
+				preList.add(c);
+			}
+			else if(component instanceof XPostRuleGroup)
+			{
+				XPostRuleGroup c = (XPostRuleGroup) component;
+				postList.add(c);
+			}
+			for(XRuleComponent child : component.getChildren())
+			{
+				visitRuleGroups(p, child, preList, postList);
+			}
+		}
+
+		private void visitBoundRule(ITreeAppendable p, XBoundRule boundRule)
+		{
+			p.append("assert ");
+			p.append(boundRule.getReference().toString());
+			p.append(" >= ");
+			p.append(Integer.toString(boundRule.getLowerBound()));
+			p.append(";\n");					
+			p.append("assert ");
+			p.append(boundRule.getReference().toString());
+			p.append(" <= ");
+			p.append(Integer.toString(boundRule.getUpperBound()));
+			p.append(";\n");
+		}
+		
+		private void visitReferenceRule(ITreeAppendable p, XReferenceRule refRule)
+		{
+			p.append(refRule.getReference());
+			p.append("(");
+			Iterator<String> it = refRule.getParameterName().iterator();
+			while(it.hasNext())
+			{
+				p.append(it.next());
+				if(it.hasNext())
+					p.append(", ");
+			}
+			p.append(");\n");
+		}
+	}	
 	
 	private boolean containsAnnotation(JvmAnnotationTarget annotationTarget, Class<? extends Annotation> annotationClass) {
 		for (JvmAnnotationReference annotationRef : annotationTarget.getAnnotations()) {
@@ -758,6 +1126,47 @@ public class XtendJvmModelInferrer extends AbstractModelInferrer {
 			jvmTypesBuilder.copyDocumentationTo(source, field);
 			jvmTypesBuilder.setInitializer(field, source.getInitialValue());
 			initializeLocalTypes(field, source.getInitialValue());
+			XRuleGroup rules = source.getInvariant();
+			if(rules != null)
+			{
+				for(XRuleComponent rule : rules.getChildren())
+				{
+					if(rule instanceof XBoundRule)
+					{
+						XBoundRule boundRule = (XBoundRule) rule;
+						String name = "inv".concat(Strings.toFirstUpper(source.getName()));
+						JvmOperation operation  = this.typesFactory.createJvmOperation();					
+						operation.setSimpleName(name);
+						operation.setVisibility(JvmVisibility.PRIVATE);
+						JvmTypeReference returnType = typeReferences.getTypeForName(Void.TYPE, operation);
+						operation.setReturnType(returnType);
+						jvmTypesBuilder.setBody(operation,  new Procedures.Procedure1<ITreeAppendable>() {
+							@Override
+							public void apply(/* @Nullable */ ITreeAppendable p) {
+								if(p != null) {
+									p = p.trace(field);
+									p.append("assert ");
+									p.append(field.getSimpleName());
+									p.append(" >= ");
+									p.append(Integer.toString(boundRule.getLowerBound()));
+									p.append(";\n");					
+									p.append("assert ");
+									p.append(field.getSimpleName());
+									p.append(" <= ");
+									p.append(Integer.toString(boundRule.getUpperBound()));
+									p.append(";\n");
+								}
+							}
+						});	
+						JvmOperation getter = toGetter(source, field.getSimpleName(), field.getSimpleName(), field.getType(), operation.getSimpleName());
+						JvmOperation setter = toSetter(source, field.getSimpleName(), field.getSimpleName(), field.getType(), operation.getSimpleName());
+						
+						container.getMembers().add(operation);	
+						container.getMembers().add(getter);	
+						container.getMembers().add(setter);	
+					}					
+				}
+			}
 		}
 	}
 

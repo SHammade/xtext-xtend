@@ -27,6 +27,7 @@ import java.util.List;
 import java.util.Map.Entry;
 import java.util.Set;
 
+import org.apache.tools.ant.types.resources.selectors.InstanceOf;
 import org.eclipse.emf.common.util.TreeIterator;
 import org.eclipse.emf.ecore.EAttribute;
 import org.eclipse.emf.ecore.EObject;
@@ -43,6 +44,8 @@ import org.eclipse.xtend.core.xtend.RichString;
 import org.eclipse.xtend.core.xtend.RichStringElseIf;
 import org.eclipse.xtend.core.xtend.RichStringForLoop;
 import org.eclipse.xtend.core.xtend.RichStringIf;
+import org.eclipse.xtend.core.xtend.XInvariantRuleGroup;
+import org.eclipse.xtend.core.xtend.XRuleGroup;
 import org.eclipse.xtend.core.xtend.XtendAnnotationTarget;
 import org.eclipse.xtend.core.xtend.XtendAnnotationType;
 import org.eclipse.xtend.core.xtend.XtendClass;
@@ -1258,14 +1261,14 @@ public class XtendValidator extends XbaseWithAnnotationsValidator {
 							XTEND_FUNCTION__NAME, -1, CREATE_FUNCTIONS_MUST_NOT_BE_ABSTRACT);
 					return;
 				}
-				if (declarator.isAnonymous()) {
+				if (declarator.isAnonymous() && function.getInvariant() == null) {
 					error("The abstract method " + function.getName() + " in type " + localClassAwareTypeNames.getReadableName(declarator) + " can only be defined by an abstract class.", 
 							XTEND_FUNCTION__NAME, -1, MISSING_ABSTRACT_IN_ANONYMOUS);
-				} else if (!((XtendClass) declarator).isAbstract() && !function.isNative()) {
+				} else if (!((XtendClass) declarator).isAbstract() && !function.isNative() && function.getInvariant() == null) {					
 					error("The abstract method " + function.getName() + " in type " + localClassAwareTypeNames.getReadableName(declarator) + " can only be defined by an abstract class.", 
 							XTEND_FUNCTION__NAME, -1, MISSING_ABSTRACT);
 				}
-				if (function.getReturnType() == null && !function.isOverride()) {
+				if (function.getReturnType() == null && !function.isOverride()) {					
 					error("The "+(function.isNative()?"native":"abstract")+" method " + function.getName() + " in type " + localClassAwareTypeNames.getReadableName(declarator) + " must declare a return type",
 							XTEND_FUNCTION__NAME, -1, ABSTRACT_METHOD_MISSING_RETURN_TYPE);
 				}
@@ -1703,11 +1706,21 @@ public class XtendValidator extends XbaseWithAnnotationsValidator {
 	public void checkLocalUsageOfDeclaredXtendFunction(XtendFunction function){
 		if(doCheckValidMemberName(function) && !isIgnored(UNUSED_PRIVATE_MEMBER)) {
 			JvmOperation jvmOperation = function.isDispatch()?associations.getDispatchOperation(function):associations.getDirectlyInferredOperation(function);
-			if(jvmOperation != null && jvmOperation.getVisibility() == JvmVisibility.PRIVATE && !isLocallyUsed(jvmOperation, getOutermostType(function))) {
-				String message = "The method " + jvmOperation.getSimpleName() 
-						+  uiStrings.parameters(jvmOperation)  
-						+ " from the type "+ getDeclaratorName(jvmOperation)+" is never used locally.";
-				addIssueToState(UNUSED_PRIVATE_MEMBER, message, XtendPackage.Literals.XTEND_FUNCTION__NAME);
+			if(jvmOperation != null && jvmOperation.getVisibility() == JvmVisibility.PRIVATE && !isLocallyUsed(jvmOperation, getOutermostType(function)) && function.getInvariant() == null) {
+				if(function.getInvariant() != null && !(function.getInvariant() instanceof XInvariantRuleGroup))
+				{
+					String message = "The rule " + jvmOperation.getSimpleName() 
+					+  uiStrings.parameters(jvmOperation)  
+					+ " from the type "+ getDeclaratorName(jvmOperation)+" is never used locally.";
+					addIssueToState(UNUSED_PRIVATE_MEMBER, message, XtendPackage.Literals.XTEND_FUNCTION__NAME);									
+				}
+				else
+				{
+					String message = "The method " + jvmOperation.getSimpleName() 
+							+  uiStrings.parameters(jvmOperation)  
+							+ " from the type "+ getDeclaratorName(jvmOperation)+" is never used locally.";
+					addIssueToState(UNUSED_PRIVATE_MEMBER, message, XtendPackage.Literals.XTEND_FUNCTION__NAME);
+				}
 			}
 		}
 	}
